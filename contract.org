@@ -1,0 +1,136 @@
+** Импорт необходимых библиотек и оболочка
+
+#+BEGIN_SRC solidity
+  import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+  import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+  import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+#+END_SRC
+
+
+
+
+pragma solidity ^0.8.0;
+
+
+** Объявление контракта
+
+#+BEGIN_SRC solidity
+  contract MyICO is ERC20, ReentrancyGuard {
+      using SafeMath for uint256;
+
+      // Параметры ICO
+      uint256 public softCap;
+      uint256 public hardCap;
+      uint256 public startTime;
+      uint256 public endTime;
+      uint256 public freezePeriod;
+      uint256 public totalCollected;
+      address public wallet; // Кошелек для перевода средств
+
+      mapping(address => uint256) public contributions;
+      bool public softCapReached;
+      bool public fundsTransferred;
+
+#+END_SRC
+
+
+Шаг 3: Конструктор контракта
+
+solidity
+
+    constructor(
+        uint256 _softCap,
+        uint256 _hardCap,
+        uint256 _startTime,
+        uint256 _endTime,
+        uint256 _freezePeriod,
+        address _wallet
+    ) ERC20("MyToken", "MTK") {
+        require(_softCap < _hardCap, "SoftCap должен быть меньше HardCap");
+        require(_startTime < _endTime, "Начальное время должно быть меньше конечного");
+        require(_wallet != address(0), "Адрес кошелька не может быть нулевым");
+
+        softCap = _softCap;
+        hardCap = _hardCap;
+        startTime = _startTime;
+        endTime = _endTime;
+        freezePeriod = _freezePeriod;
+        wallet = _wallet;
+    }
+
+Шаг 4: Функция покупки токенов
+
+solidity
+
+    function buyTokens() public payable nonReentrant {
+        require(block.timestamp >= startTime && block.timestamp <= endTime, "ICO не активно");
+        require(totalCollected.add(msg.value) <= hardCap, "Превышен HardCap");
+
+        uint256 tokens = msg.value; // Настройте курс обмена по необходимости
+
+        _mint(msg.sender, tokens);
+        contributions[msg.sender] = contributions[msg.sender].add(msg.value);
+        totalCollected = totalCollected.add(msg.value);
+
+        if (totalCollected >= softCap) {
+            softCapReached = true;
+        }
+    }
+
+Шаг 5: Функция вывода средств после достижения SoftCap
+
+solidity
+
+    function withdrawFunds() public {
+        require(softCapReached, "SoftCap не достигнут");
+        require(!fundsTransferred, "Средства уже переведены");
+
+        (bool success, ) = wallet.call{value: address(this).balance}("");
+        require(success, "Перевод средств не удался");
+
+        fundsTransferred = true;
+    }
+
+Шаг 6: Функция возврата средств при недостижении SoftCap
+
+solidity
+
+    function refund() public nonReentrant {
+        require(block.timestamp > endTime, "ICO еще не закончилось");
+        require(!softCapReached, "SoftCap достигнут, возврат невозможен");
+        require(contributions[msg.sender] > 0, "У вас нет вложенных средств");
+
+        uint256 amount = contributions[msg.sender];
+        contributions[msg.sender] = 0;
+
+        (bool success, ) = msg.sender.call{value: amount}("");
+        require(success, "Возврат средств не удался");
+
+        _burn(msg.sender, balanceOf(msg.sender));
+    }
+
+Шаг 7: Реализация периода заморозки токенов (freezePeriod)
+
+solidity
+
+    function _beforeTokenTransfer(address from, address to, uint256 amount) internal virtual override {
+        super._beforeTokenTransfer(from, to, amount);
+
+        // Блокировка передачи токенов до окончания freezePeriod
+        if (from != address(0) && to != address(0)) { // Исключаем минтинг и сжигание
+            require(block.timestamp >= endTime.add(freezePeriod), "Период заморозки активен");
+        }
+    }
+
+Шаг 8: Дополнительные функции для проверки состояния ICO
+
+solidity
+
+    function isActive() public view returns (bool) {
+        return block.timestamp >= startTime && block.timestamp <= endTime && totalCollected < hardCap;
+    }
+
+    function isSuccessful() public view returns (bool) {
+        return softCapReached && fundsTransferred;
+    }
+}
